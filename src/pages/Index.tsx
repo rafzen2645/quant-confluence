@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Header } from "@/components/Header";
 import { ChartUpload } from "@/components/ChartUpload";
 import { PredictionResult, type PredictionData } from "@/components/PredictionResult";
+import { PredictionHistory } from "@/components/PredictionHistory";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 import tradingHeroBg from "@/assets/trading-hero-bg.jpg";
 
 const Index = () => {
@@ -10,37 +12,107 @@ const Index = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const { toast } = useToast();
 
-  // Mock AI analysis function - in a real app, this would call your AI service
-  const mockAnalyzeChart = async (file: File): Promise<PredictionData> => {
+  // Enhanced AI analysis with memory system
+  const analyzeChartWithMemory = async (file: File): Promise<PredictionData> => {
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 3000));
     
-    // Mock prediction data - replace with actual AI analysis
-    const predictions: PredictionData[] = [
+    // Get historical data for learning
+    const { data: historicalPredictions } = await supabase
+      .from('predictions')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    // Mock chart analysis - in real implementation, this would be AI vision analysis
+    const chartFeatures = {
+      pattern: ['engulfing', 'pin_bar', 'marubozu'][Math.floor(Math.random() * 3)],
+      trend: ['uptrend', 'downtrend', 'sideways'][Math.floor(Math.random() * 3)],
+      zone: ['support', 'resistance', 'order_block'][Math.floor(Math.random() * 3)],
+      momentum: ['strong', 'weak', 'neutral'][Math.floor(Math.random() * 3)]
+    };
+
+    // Apply memory-based learning to adjust confidence and risk
+    let baseConfidence: 'High' | 'Medium' | 'Low' = 'Medium';
+    let baseRisk: 'Low' | 'Medium' | 'High' = 'Medium';
+    
+    if (historicalPredictions && historicalPredictions.length > 0) {
+      // Analyze similar setups from history
+      const similarSetups = historicalPredictions.filter(p => {
+        const features = p.chart_features as any;
+        return features?.pattern === chartFeatures.pattern &&
+               features?.trend === chartFeatures.trend;
+      });
+      
+      if (similarSetups.length > 0) {
+        const winRate = similarSetups.filter(s => s.outcome === 'Win').length / similarSetups.length;
+        
+        // Adjust confidence based on historical performance
+        if (winRate > 0.7) {
+          baseConfidence = 'High';
+          baseRisk = 'Low';
+        } else if (winRate < 0.4) {
+          baseConfidence = 'Low';
+          baseRisk = 'High';
+        }
+      }
+    }
+
+    // Generate prediction based on confluences
+    const predictions: (Omit<PredictionData, 'id'> & { chartFeatures: typeof chartFeatures })[] = [
       {
         direction: 'Buy',
-        confidence: 'High',
-        riskLevel: 'Low',
-        reason: 'Bullish engulfing at trendline support with long rejection wick and clear uptrend continuation.',
-        timestamp: new Date().toLocaleTimeString()
+        confidence: baseConfidence,
+        riskLevel: baseRisk,
+        reason: `Bullish ${chartFeatures.pattern} at ${chartFeatures.zone} with ${chartFeatures.momentum} momentum in ${chartFeatures.trend}.`,
+        timestamp: new Date().toLocaleTimeString(),
+        chartFeatures
       },
       {
         direction: 'Sell',
-        confidence: 'Medium',
-        riskLevel: 'Medium',
-        reason: 'Bearish pin bar at resistance zone with momentum divergence in downtrend context.',
-        timestamp: new Date().toLocaleTimeString()
+        confidence: baseConfidence,
+        riskLevel: baseRisk,
+        reason: `Bearish ${chartFeatures.pattern} at ${chartFeatures.zone} with ${chartFeatures.momentum} momentum in ${chartFeatures.trend}.`,
+        timestamp: new Date().toLocaleTimeString(),
+        chartFeatures
       },
       {
         direction: 'Wait',
         confidence: 'Low',
         riskLevel: 'High',
         reason: 'Market in consolidation – no valid pattern or clean zone interaction.',
-        timestamp: new Date().toLocaleTimeString()
+        timestamp: new Date().toLocaleTimeString(),
+        chartFeatures
       }
     ];
     
-    return predictions[Math.floor(Math.random() * predictions.length)];
+    const selectedPrediction = predictions[Math.floor(Math.random() * predictions.length)];
+    
+    // Store prediction in database
+    const { data: savedPrediction, error } = await supabase
+      .from('predictions')
+      .insert({
+        chart_features: selectedPrediction.chartFeatures,
+        direction: selectedPrediction.direction,
+        confidence: selectedPrediction.confidence,
+        risk_level: selectedPrediction.riskLevel,
+        reason: selectedPrediction.reason
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Error saving prediction:', error);
+    }
+
+    return {
+      id: savedPrediction?.id,
+      direction: selectedPrediction.direction,
+      confidence: selectedPrediction.confidence,
+      riskLevel: selectedPrediction.riskLevel,
+      reason: selectedPrediction.reason,
+      timestamp: selectedPrediction.timestamp
+    };
   };
 
   const handleImageUpload = async (file: File) => {
@@ -52,7 +124,7 @@ const Index = () => {
         description: "AI is processing your chart for prediction...",
       });
 
-      const result = await mockAnalyzeChart(file);
+      const result = await analyzeChartWithMemory(file);
       setPrediction(result);
       
       toast({
@@ -90,10 +162,14 @@ const Index = () => {
             isAnalyzing={isAnalyzing}
           />
           
-          <PredictionResult 
-            prediction={prediction}
-            isAnalyzing={isAnalyzing}
-          />
+          <div className="space-y-6">
+            <PredictionResult 
+              prediction={prediction}
+              isAnalyzing={isAnalyzing}
+            />
+            
+            <PredictionHistory currentPrediction={prediction} />
+          </div>
         </div>
 
         {/* Disclaimer */}

@@ -4,6 +4,7 @@ import { TrendingUp, TrendingDown, Pause, Clock, Target, AlertCircle } from "luc
 import { cn } from "@/lib/utils";
 
 export interface PredictionData {
+  id?: string;
   direction: 'Buy' | 'Sell' | 'Wait';
   confidence: 'High' | 'Medium' | 'Low';
   riskLevel: 'Low' | 'Medium' | 'High';
