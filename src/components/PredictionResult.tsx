@@ -1,7 +1,10 @@
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { TrendingUp, TrendingDown, Pause, Clock, Target, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 
 export interface PredictionData {
   id?: string;
@@ -15,9 +18,33 @@ export interface PredictionData {
 interface PredictionResultProps {
   prediction: PredictionData | null;
   isAnalyzing: boolean;
+  onFeedbackGiven?: (predictionId: string, feedback: 'Win' | 'Loss') => void;
 }
 
-export const PredictionResult = ({ prediction, isAnalyzing }: PredictionResultProps) => {
+export const PredictionResult = ({ prediction, isAnalyzing, onFeedbackGiven }: PredictionResultProps) => {
+  const [feedback, setFeedback] = useState<null | 'Win' | 'Loss'>(null);
+  const [lastPredictionId, setLastPredictionId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (prediction?.id && prediction.id !== lastPredictionId) {
+      setFeedback(null);
+      setLastPredictionId(prediction.id);
+    }
+    if (!prediction) {
+      setFeedback(null);
+      setLastPredictionId(undefined);
+    }
+  }, [prediction]);
+
+  const handleFeedback = async (result: 'Win' | 'Loss') => {
+    if (!prediction?.id || feedback) return;
+    setFeedback(result);
+    await supabase
+      .from('predictions')
+      .update({ outcome: result, outcome_updated_at: new Date().toISOString() })
+      .eq('id', prediction.id);
+    if (onFeedbackGiven) onFeedbackGiven(prediction.id, result);
+  };
   const getDirectionIcon = (direction: string) => {
     switch (direction) {
       case 'Buy':
@@ -187,6 +214,38 @@ export const PredictionResult = ({ prediction, isAnalyzing }: PredictionResultPr
               <p className="text-xs text-primary font-medium">
                 📌 Remember: Apply 1-step Martingale (MTG) manually if needed
               </p>
+            </div>
+          )}
+          {/* Feedback Block */}
+          {prediction.id && feedback === null && (
+            <div className="flex justify-center gap-4 mt-6">
+              <Button
+                variant="outline"
+                className="border-green-500 text-green-600 hover:bg-green-50"
+                onClick={() => handleFeedback('Win')}
+                aria-label="Mark as Win"
+              >
+                ✅ WIN
+              </Button>
+              <Button
+                variant="outline"
+                className="border-red-500 text-red-600 hover:bg-red-50"
+                onClick={() => handleFeedback('Loss')}
+                aria-label="Mark as Loss"
+              >
+                ❌ LOSS
+              </Button>
+            </div>
+          )}
+          {/* Feedback confirmation */}
+          {feedback && (
+            <div className="flex justify-center mt-6">
+              <span className={cn(
+                "px-4 py-2 rounded text-sm font-medium",
+                feedback === 'Win' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              )}>
+                Feedback: {feedback}
+              </span>
             </div>
           )}
         </div>

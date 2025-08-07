@@ -16,13 +16,13 @@ const Index = () => {
   const analyzeChartWithMemory = async (file: File): Promise<PredictionData> => {
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 3000));
-    
+
     // Get historical data for learning
     const { data: historicalPredictions } = await supabase
       .from('predictions')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(50);
+      .limit(200);
 
     // Mock chart analysis - in real implementation, this would be AI vision analysis
     const chartFeatures = {
@@ -32,71 +32,105 @@ const Index = () => {
       momentum: ['strong', 'weak', 'neutral'][Math.floor(Math.random() * 3)]
     };
 
-    // Apply memory-based learning to adjust confidence and risk
-    let baseConfidence: 'High' | 'Medium' | 'Low' = 'Medium';
-    let baseRisk: 'Low' | 'Medium' | 'High' = 'Medium';
-    
-    if (historicalPredictions && historicalPredictions.length > 0) {
-      // Analyze similar setups from history
-      const similarSetups = historicalPredictions.filter(p => {
+    // Score each direction for this setup
+    const directions: ('Buy' | 'Sell' | 'Wait')[] = ['Buy', 'Sell', 'Wait'];
+    let bestScore = -Infinity;
+    let bestPrediction: any = null;
+
+    directions.forEach(direction => {
+      // Find all historical predictions with same pattern+trend+direction
+      const similar = (historicalPredictions || []).filter(p => {
         const features = p.chart_features as any;
         return features?.pattern === chartFeatures.pattern &&
-               features?.trend === chartFeatures.trend;
+               features?.trend === chartFeatures.trend &&
+               p.direction === direction;
       });
-      
-      if (similarSetups.length > 0) {
-        const winRate = similarSetups.filter(s => s.outcome === 'Win').length / similarSetups.length;
-        
-        // Adjust confidence based on historical performance
-        if (winRate > 0.7) {
-          baseConfidence = 'High';
-          baseRisk = 'Low';
-        } else if (winRate < 0.4) {
-          baseConfidence = 'Low';
-          baseRisk = 'High';
-        }
-      }
-    }
+      const total = similar.length;
+      const winCount = similar.filter(s => s.outcome === 'Win').length;
+      const lossCount = similar.filter(s => s.outcome === 'Loss').length;
+      const winRate = total > 0 ? winCount / total : 0.5;
+      const lossRate = total > 0 ? lossCount / total : 0.5;
 
-    // Generate prediction based on confluences
-    const predictions: (Omit<PredictionData, 'id'> & { chartFeatures: typeof chartFeatures })[] = [
-      {
-        direction: 'Buy',
-        confidence: baseConfidence,
-        riskLevel: baseRisk,
-        reason: `Bullish ${chartFeatures.pattern} at ${chartFeatures.zone} with ${chartFeatures.momentum} momentum in ${chartFeatures.trend}.`,
-        timestamp: new Date().toLocaleTimeString(),
-        chartFeatures
-      },
-      {
-        direction: 'Sell',
-        confidence: baseConfidence,
-        riskLevel: baseRisk,
-        reason: `Bearish ${chartFeatures.pattern} at ${chartFeatures.zone} with ${chartFeatures.momentum} momentum in ${chartFeatures.trend}.`,
-        timestamp: new Date().toLocaleTimeString(),
-        chartFeatures
-      },
-      {
+      // If this direction is losing, try the opposite direction
+      let adjustedDirection = direction;
+      let adjustedScore = winRate - lossRate;
+      if (direction !== 'Wait' && lossRate > 0.6 && total > 5) {
+        // Try the opposite direction if this one is losing
+        adjustedDirection = direction === 'Buy' ? 'Sell' : 'Buy';
+        // Recalculate for the opposite direction
+        const oppSimilar = (historicalPredictions || []).filter(p => {
+          const features = p.chart_features as any;
+          return features?.pattern === chartFeatures.pattern &&
+                 features?.trend === chartFeatures.trend &&
+                 p.direction === adjustedDirection;
+        });
+        const oppTotal = oppSimilar.length;
+        const oppWinCount = oppSimilar.filter(s => s.outcome === 'Win').length;
+        const oppLossCount = oppSimilar.filter(s => s.outcome === 'Loss').length;
+        const oppWinRate = oppTotal > 0 ? oppWinCount / oppTotal : 0.5;
+        const oppLossRate = oppTotal > 0 ? oppLossCount / oppTotal : 0.5;
+        adjustedScore = oppWinRate - oppLossRate;
+      }
+
+      // Assign confidence/risk based on score
+      let confidence: 'High' | 'Medium' | 'Low' = 'Medium';
+      let riskLevel: 'Low' | 'Medium' | 'High' = 'Medium';
+      if (adjustedScore > 0.4) {
+        confidence = 'High';
+        riskLevel = 'Low';
+      } else if (adjustedScore < -0.4) {
+        confidence = 'Low';
+        riskLevel = 'High';
+      }
+
+      // Reason string
+      let reason = '';
+      if (direction === 'Wait') {
+        reason = 'Market in consolidation – no valid pattern or clean zone interaction.';
+      } else if (direction !== adjustedDirection) {
+        reason = `Historical feedback shows ${direction} is losing for this setup. Trying ${adjustedDirection} instead.`;
+      } else {
+        reason = `${adjustedDirection === 'Buy' ? 'Bullish' : 'Bearish'} ${chartFeatures.pattern} at ${chartFeatures.zone} with ${chartFeatures.momentum} momentum in ${chartFeatures.trend}.`;
+      }
+
+      // Score for Wait is always 0
+      const finalScore = direction === 'Wait' ? 0 : adjustedScore;
+
+      if (finalScore > bestScore) {
+        bestScore = finalScore;
+        bestPrediction = {
+          direction: adjustedDirection,
+          confidence,
+          riskLevel,
+          reason,
+          timestamp: new Date().toLocaleTimeString(),
+          chartFeatures
+        };
+      }
+    });
+
+    // If all directions are bad, fallback to Wait
+    if (!bestPrediction) {
+      bestPrediction = {
         direction: 'Wait',
         confidence: 'Low',
         riskLevel: 'High',
-        reason: 'Market in consolidation – no valid pattern or clean zone interaction.',
+        reason: 'No reliable prediction found for this setup.',
         timestamp: new Date().toLocaleTimeString(),
         chartFeatures
-      }
-    ];
-    
-    const selectedPrediction = predictions[Math.floor(Math.random() * predictions.length)];
+      };
+    }
     
     // Store prediction in database
+
     const { data: savedPrediction, error } = await supabase
       .from('predictions')
       .insert({
-        chart_features: selectedPrediction.chartFeatures,
-        direction: selectedPrediction.direction,
-        confidence: selectedPrediction.confidence,
-        risk_level: selectedPrediction.riskLevel,
-        reason: selectedPrediction.reason
+        chart_features: bestPrediction.chartFeatures,
+        direction: bestPrediction.direction,
+        confidence: bestPrediction.confidence,
+        risk_level: bestPrediction.riskLevel,
+        reason: bestPrediction.reason
       })
       .select()
       .single();
@@ -107,11 +141,11 @@ const Index = () => {
 
     return {
       id: savedPrediction?.id,
-      direction: selectedPrediction.direction,
-      confidence: selectedPrediction.confidence,
-      riskLevel: selectedPrediction.riskLevel,
-      reason: selectedPrediction.reason,
-      timestamp: selectedPrediction.timestamp
+      direction: bestPrediction.direction,
+      confidence: bestPrediction.confidence,
+      riskLevel: bestPrediction.riskLevel,
+      reason: bestPrediction.reason,
+      timestamp: bestPrediction.timestamp
     };
   };
 
