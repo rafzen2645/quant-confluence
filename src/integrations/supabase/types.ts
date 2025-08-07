@@ -14,42 +14,7 @@ export type Database = {
   }
   public: {
     Tables: {
-      predictions: {
-        Row: {
-          chart_features: Json
-          confidence: string
-          created_at: string
-          direction: string
-          id: string
-          outcome: string | null
-          outcome_updated_at: string | null
-          reason: string
-          risk_level: string
-        }
-        Insert: {
-          chart_features: Json
-          confidence: string
-          created_at?: string
-          direction: string
-          id?: string
-          outcome?: string | null
-          outcome_updated_at?: string | null
-          reason: string
-          risk_level: string
-        }
-        Update: {
-          chart_features?: Json
-          confidence?: string
-          created_at?: string
-          direction?: string
-          id?: string
-          outcome?: string | null
-          outcome_updated_at?: string | null
-          reason?: string
-          risk_level?: string
-        }
-        Relationships: []
-      }
+      [_ in never]: never
     }
     Views: {
       [_ in never]: never
